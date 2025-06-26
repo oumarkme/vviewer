@@ -1,10 +1,7 @@
 ### Load required packages
-packages <- c('data.table', 'tidyverse', 'Rsamtools', 'bslib', 'shiny', 'GenomicRanges', 'IRanges')
+packages <- c('data.table', 'tidyverse', 'Rsamtools', 'bslib', 'shiny', 'GenomicRanges', 'IRanges', 'httr', 'jsonlite', 'xml2')
 for(pkg in packages) {
-    if(!require(pkg, character.only = TRUE)) {
-        install.packages(pkg, repos='https://cloud.r-project.org/')
-        library(pkg, character.only = TRUE)
-    }
+    library(pkg, character.only = TRUE)
 }
 
 ### vcfFile
@@ -27,14 +24,28 @@ ui = page_fillable(
                 )
             ),
             card(
-                card_header("Physical position"),
-                textInput( 
-                    "coordinate", 
-                    "Coordinate",
-                    placeholder = "(ex: chr1:1000-2000 or chr1:1000)",
-                    value = NULL
-                )
+                card_header("Variant coordinate input"),
+                navset_card_tab(
+                    nav_panel("Physical position", 
+                        textInput( 
+                        "coordinate", 
+                        "Coordinate (hg38)",
+                        placeholder = "(ex: chr22:42130692 or chr22:42130692-42130692)",
+                        value = NULL
+                        )
+                    ),
+                    nav_panel("HGVS notation", 
+                        textInput(
+                            "refseq_coordinate",
+                            "Identifier based on a HGVS notation",
+                            placeholder = "(ex: NM_000106.6:c.100C>T)",
+                            value = NULL
+                        )
+                    )
+                ),
+                textOutput("coord")
             ),
+
             card(
                 card_header("Sample"),
                 selectizeInput(
@@ -42,8 +53,8 @@ ui = page_fillable(
                     'Select samples',
                     NULL,
                     multiple = TRUE
-                )
-                
+                ),
+                p('Remain empty to select all samples.')
             ),
     fill=F, min_height='200px'),
 
@@ -84,11 +95,27 @@ server = function(input, output, session){
     })
 
 
-    # Get coordinate input and remove all commas
+    # Get coordinate input (from either coordinate or refseq_coordinate)
     coordinate <- reactive({
         coord = input$coordinate
-        req(coord)
-        coord = gsub(",", "", coord)
+        refseq = input$refseq_coordinate
+
+        # Prefer coordinate if provided, otherwise use refseq_coordinate
+        if (!is.null(coord) && nzchar(coord)) {
+            coord = gsub(",", "", coord)
+
+        } else if (!is.null(refseq) && nzchar(refseq)) {
+            ensembl_get = GET(paste0('https://rest.ensembl.org/vep/human/hgvs/', refseq), 
+                content_type("application/json"))
+            ensembl_result = fromJSON(toJSON(content(ensembl_get)))
+
+            if (!is.null(ensembl_result)){
+                coord = paste0('chr', ensembl_result$seq_region_name[[1]][1], ':', 
+                        ensembl_result$start[[1]][1], '-',
+                        ensembl_result$end[[1]][1])
+            }
+        }
+
         return(coord)
     })
     output$coord = renderText({ coordinate() })
